@@ -1,0 +1,27 @@
+#include <Arduino.h>
+
+#define FLOAT_PIN 27
+
+void setup() {
+    Serial.begin(115200);
+    
+    // INPUT_PULLUP prevents the pin from "floating" between states
+    pinMode(FLOAT_PIN, INPUT_PULLUP);
+    
+    Serial.println("Float Switch Monitor Started");
+}
+
+void loop() {
+    // Read the switch state
+    int switchState = digitalRead(FLOAT_PIN);
+
+    if (switchState == LOW) {
+        // Because we use PULLUP, LOW means the circuit is CLOSED (connected to GND)
+        Serial.println("Switch Status: CLOSED (Water Level Reached)");
+    } else {
+        // HIGH means the circuit is OPEN
+        Serial.println("Switch Status: OPEN (Water Level Low)");
+    }
+
+    delay(500); // Check every half second
+}
