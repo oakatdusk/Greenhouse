@@ -44,6 +44,9 @@ void initRTC();
 void pageStatus(DateTime t);
 void drawPage(int state, DateTime t);
 
+void startWatering();
+void stopWatering();
+
 // VARIABLES___________________________________________________________________________________
 
 // for display
@@ -81,6 +84,10 @@ float soilTempA = 0.0;
 int soilMoistureA = 0; // %
 float soilTempB = 0.0;
 int soilMoistureB = 0; // %
+
+//timing
+unsigned long wateringDuration =  1 * 60 * 1000; //how long to water for
+unsigned long wateringCurrentDuration = 0; //how long we've been watering so far
 
 void setup()
 {
@@ -128,30 +135,22 @@ void loop()
     } 
     else {
       // Second press: Perform the action and go back to Status page
+      pageState = 1; // Go back to Status page after confirming
       if (isWatering) {
-        isWatering = false;
-        digitalWrite(RELAY_PIN, LOW);
-        statusMessage = "Watering Stopped";
+        stopWatering();
+        statusMessage = "Manual Stop";
         wateringStopped = true; // Mark that watering was stopped manually
+        digitalWrite(YELLOW_LED_PIN, HIGH); // Light up yellow LED to indicate manual stop
       } 
       else if (readyToWater) {
-        isWatering = true;
-        digitalWrite(RELAY_PIN, HIGH);
-        statusMessage = "Watering Started";
-        wateringStopped = false; // Reset this in case it was previously stopped
+        startWatering();
       }
       else
       {
         statusMessage = "Cannot Water";
+        digitalWrite(YELLOW_LED_PIN, HIGH); // Light up yellow LED to indicate we can't water
       }
-    
-    pageState = 1;
-    drawPage(pageState, now);
-    u8g2.setPowerSave(0);                   // Wake up OLED if it was asleep
-    lastActivity = millis();                // Reset inactivity timer
-    digitalWrite(BLUE_LED_PIN, isWatering); // Light up button
-    Serial.print("Blue pressed - status changed to: ");
-    Serial.println(statusMessage);
+  
     }
 }
   lastBlueState = currentBlueState;
@@ -282,4 +281,28 @@ void drawPage(int state, DateTime t)
     break;
   }
   u8g2.sendBuffer();
+}
+
+void startWatering() {
+
+  if (isWatering) {
+    return; // Already watering, do nothing
+  }
+isWatering = true;
+wateringStopped = false; // Reset this in case it was previously stopped
+digitalWrite(RELAY_PIN, HIGH); //turn on the relay and the pump
+digitalWrite(BLUE_LED_PIN, HIGH); // Light up the blue button LED to indicate watering is active
+digitalWrite(YELLOW_LED_PIN, LOW); // Ensure yellow LED is off when watering starts
+statusMessage = "Watering";
+wateringCurrentDuration = millis(); // Start the watering timer
+
+}
+
+void stopWatering() {
+  if (!isWatering) {
+    return; // Not watering, do nothing
+  }
+  isWatering = false;
+  digitalWrite(RELAY_PIN, LOW); //turn off the relay and the pump
+  digitalWrite(BLUE_LED_PIN, LOW); // Turn off the blue button LED
 }
