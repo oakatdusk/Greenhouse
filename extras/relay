@@ -1,0 +1,1 @@
+   // digitalWrite(RELAY_PIN, !digitalRead(RELAY_PIN)); // Toggle relay for testing

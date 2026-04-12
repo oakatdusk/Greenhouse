@@ -7,6 +7,7 @@
 #include "OneWire.h"           //allows us to have several temp sensors on one wire
 #include "DallasTemperature.h" //to work with DS18B20 temp sensors
 
+
 // PIN DEFINITIONS____________________________________________________________________________
 
 // Sensors
@@ -49,8 +50,32 @@ void drawPage(int state, DateTime t);
 // for display
 int pageState = 0;              // 0=OFF, 1=Status, 2=Barrel, 3=Soil
 unsigned long lastActivity = 0; // Tracks time in milliseconds
-const long timeout = 5000;     // 10 seconds before turning off
-unsigned long x = 0;
+const long timeout = 20000;     // 20 seconds before turning off
+
+//for button debounce
+unsigned long lastDebounceTime = 0;
+const int debounceDelay = 50;
+bool lastButtonState = HIGH;      // To track the previous state
+
+// --- SYSTEM STATUS & SAFETY ---
+bool readyToWater = false;       // True if all conditions (temp, water) are met
+bool isWatering = false;        // Is the pump/relay currently ON?
+bool wateredToday = false;
+
+bool hasError = false;          // True if hardware fails
+String statusMessage = "IDLE";  // Human-readable status (e.g., "Ready", "Soil Wet")
+String lastError = "";          // Human-readable error (e.g., "RTC Lost", "Sensor A Fail")
+
+// --- WATER BARREL (TANK) ---
+bool waterLevelGood = false;     // From Float Switch
+float barrelTemp = 0.0;         // Water temperature
+
+// --- SOIL MONITORING (ZONE A & B) ---
+float soilTempA = 0.0;
+int soilMoistureA = 0;          // % 
+float soilTempB = 0.0;
+int soilMoistureB = 0;          // %
+
 
 void setup()
 {
@@ -67,42 +92,27 @@ void loop()
   DateTime now = rtc.now();
 
   // 1. CHECK THE BUTTON
-  // if (digitalRead(YELLOW_BUTTON_PIN) == LOW || Serial.available() > 0) {
+  bool currentButtonState = digitalRead(YELLOW_BUTTON_PIN);
+  if (currentButtonState != lastButtonState && currentButtonState == LOW && (millis() - lastDebounceTime > debounceDelay)) {
 
-  if (Serial.available() > 0)
-  {
-    while(Serial.available() > 0) {
-      Serial.read(); 
-    }
     lastActivity = millis(); // Reset inactivity timer
+    lastDebounceTime = millis();
+    
 
-    pageState++; // Move to next page
-    if (pageState > 3)
-    { // If past last page, go back to Page 1
-      pageState = 1;
-    }
-
+    pageState = (pageState % 3) + 1; // Pro tip: this cycles 1, 2, 3 automatically
     u8g2.setPowerSave(0); // Wake up OLED if it was asleep
+    drawPage(pageState, now);
     Serial.print("Page changed to: ");
     Serial.println(pageState);
-  }
 
-  // 2. CHECK FOR INACTIVITY
+  }
+  lastButtonState = currentButtonState;
+
   if (millis() - lastActivity > timeout)
   {
     pageState = 0;        // Set state to OFF
     u8g2.setPowerSave(1); // Put OLED into low-power sleep
   }
-
-  // 3. DISPLAY THE CORRECT PAGE
-  if (pageState > 0)
-  {
-    drawPage(pageState, now); // Custom function to draw based on state
-  }
-  // Print current time
-  // Serial.printf("Date: %02d/%02d/%04d | Time: %02d:%02d:%02d\n",
-  //               now.day(), now.month(), now.year(),
-  //               now.hour(), now.minute(), now.second());
 }
 
 void initPins()
@@ -138,8 +148,8 @@ void initRTC()
   if (!rtc.begin())
   {
     Serial.println("Couldn't find RTC! Check your SDA/SCL wiring.");
-    while (1)
-      delay(10);
+    lastError = "RTC ERROR"; 
+    hasError = true;
   }
 
   if (rtc.lostPower())
@@ -153,21 +163,45 @@ void initRTC()
 void drawPage(int state, DateTime t)
 {
   u8g2.clearBuffer();
+  // --- PART A: THE SAFETY HEADER (Shows on every page) ---
+    if (hasError) {
+        u8g2.setFont(u8g2_font_6x10_tf);
+        u8g2.drawBox(0, 0, 128, 11); // Draw a black bar at the top
+        u8g2.setDrawColor(0);        // Switch to "white text on black"
+        u8g2.drawStr(2, 9, "ERR:");
+        u8g2.drawStr(30, 9, lastError.c_str());
+        u8g2.setDrawColor(1);        // Switch back to normal
+    } else {
+        // Show normal system status if no errors
+        u8g2.setFont(u8g2_font_6x10_tf);
+        u8g2.setCursor(0, 9);
+        u8g2.print("System: ");
+        u8g2.print(statusMessage);
+    }
+    
+    u8g2.drawHLine(0, 12, 128); // Divider line under the header
   u8g2.setFont(u8g2_font_6x10_tf);
   switch (state)
   {
-  case 1: // SOIL PAGE
-    u8g2.drawStr(0, 10, "SOIL MOISTURE 1");
-    // Add your soil sensor logic here
+  case 1: // STATUS PAGE
+    u8g2.drawStr(0, 30, "STATUS PAGE");
+    u8g2.setCursor(0, 45); // Move down to the next "slot"
+    u8g2.printf("%02d:%02d", t.hour(), t.minute());
     break;
   case 2: // TANK PAGE
-    u8g2.drawStr(0, 10, "WATER LEVEL 2");
+    u8g2.drawStr(0, 30, "RAIN BARREL");
     // Add your float switch logic here
     break;
   case 3: // TEMP PAGE
-    u8g2.drawStr(0, 10, "AIR TEMP 3");
-    u8g2.setCursor(0, 30);
-    u8g2.print(t.hour()); // Example of using our DateTime "now"
+    u8g2.setCursor(0, 30); // Move down to the next "slot"
+    u8g2.printf("A | M: %d%% ", soilMoistureA);
+    u8g2.printf("T: %.1f", soilTempA);
+    u8g2.drawUTF8(u8g2.getCursorX(), u8g2.getCursorY(), "°C");
+
+    u8g2.setCursor(0, 45); // Move down again
+    u8g2.printf("B | M: %d%% ", soilMoistureB);
+    u8g2.printf("T: %.1f", soilTempB);
+    u8g2.drawUTF8(u8g2.getCursorX(), u8g2.getCursorY(), "°C");
     break;
   }
   u8g2.sendBuffer();
