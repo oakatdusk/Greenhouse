@@ -59,12 +59,14 @@ bool lastYellowState = HIGH;
 
 // For Blue Button
 unsigned long lastBlueDebounce = 0;
+bool blueAlreadyPressed = false; // To track if blue button was already pressed (for toggling)
 bool lastBlueState = HIGH;
 
 // --- SYSTEM STATUS & SAFETY ---
 bool readyToWater = true; // True if all conditions (temp, water) are met
-bool isWatering = false;   // Is the pump/relay currently ON?
+bool isWatering = false;  // Is the pump/relay currently ON?
 bool wateredToday = false;
+bool wateringStopped = false; // True if watering was stopped due to a condition
 
 bool hasError = false;         // True if hardware fails
 String statusMessage = "IDLE"; // Human-readable status (e.g., "Ready", "Soil Wet")
@@ -93,6 +95,9 @@ void setup()
 void loop()
 {
   DateTime now = rtc.now();
+  waterLevelGood = (digitalRead(FLOAT_SWITCH_PIN) == LOW);
+
+
 
   // yellow button: cycle through display pages
   bool currentYellowState = digitalRead(YELLOW_BUTTON_PIN);
@@ -101,9 +106,9 @@ void loop()
 
     lastActivity = millis(); // Reset inactivity timer
     lastYellowDebounce = millis();
-    pageState = (pageState % 3) + 1; // this cycles 1, 2, 3 automatically
+    pageState++;
+    if (pageState > 3) pageState = 1; // Cycle back to first page (skip OFF) 
     u8g2.setPowerSave(0);            // Wake up OLED if it was asleep
-    drawPage(pageState, now);
     Serial.print("Yellow pressed - page changed to: ");
     Serial.println(pageState);
   }
@@ -113,44 +118,54 @@ void loop()
   bool currentBlueState = digitalRead(BLUE_BUTTON_PIN);
   if (currentBlueState != lastBlueState && currentBlueState == LOW && (millis() - lastBlueDebounce > debounceDelay))
   {
+    u8g2.setPowerSave(0); 
+    lastActivity = millis(); // Reset inactivity timer
     lastBlueDebounce = millis();
-
-    if (isWatering)
-    {
-      isWatering = false;
-      statusMessage = "Watering Stopped";
-    }
-    else
-    {
-      // Only allow starting watering if conditions are met
-      if (readyToWater)
-      {
+   
+    if (pageState != 4) {
+      // First press: Jump to confirmation page
+      pageState = 4; 
+    } 
+    else {
+      // Second press: Perform the action and go back to Status page
+      if (isWatering) {
+        isWatering = false;
+        digitalWrite(RELAY_PIN, LOW);
+        statusMessage = "Watering Stopped";
+        wateringStopped = true; // Mark that watering was stopped manually
+      } 
+      else if (readyToWater) {
         isWatering = true;
+        digitalWrite(RELAY_PIN, HIGH);
         statusMessage = "Watering Started";
+        wateringStopped = false; // Reset this in case it was previously stopped
       }
       else
       {
         statusMessage = "Cannot Water";
       }
-    }
+    
     pageState = 1;
     drawPage(pageState, now);
-    u8g2.setPowerSave(0); // Wake up OLED if it was asleep
-    lastActivity = millis(); // Reset inactivity timer
-    digitalWrite(RELAY_PIN, isWatering); // Physically turn pump on/off
+    u8g2.setPowerSave(0);                   // Wake up OLED if it was asleep
+    lastActivity = millis();                // Reset inactivity timer
     digitalWrite(BLUE_LED_PIN, isWatering); // Light up button
     Serial.print("Blue pressed - status changed to: ");
     Serial.println(statusMessage);
-
-  }
+    }
+}
   lastBlueState = currentBlueState;
 
-  
-
-  if (millis() - lastActivity > timeout) //turn off display after 20 seconds of inactivity
+  if (millis() - lastActivity > timeout) // turn off display after 20 seconds of inactivity
   {
     pageState = 0;        // Set state to OFF
     u8g2.setPowerSave(1); // Put OLED into low-power sleep
+  }
+  else {
+    // Only update the display if we're on a page (not OFF)
+    if (pageState != 0) {
+      drawPage(pageState, now);
+    }
   }
 }
 
@@ -231,7 +246,16 @@ void drawPage(int state, DateTime t)
     break;
   case 2: // TANK PAGE
     u8g2.drawStr(0, 30, "RAIN BARREL");
-    // Add your float switch logic here
+    u8g2.setCursor(0, 45);
+    if (waterLevelGood) {
+      u8g2.print("Level: Good");
+    } else {
+      u8g2.print("Level: Empty");
+    }
+    
+    u8g2.setCursor(0, 60);
+    u8g2.printf("Temp: %.1f", barrelTemp);
+    u8g2.drawUTF8(u8g2.getCursorX(), u8g2.getCursorY(), "°C");
     break;
   case 3:                  // TEMP PAGE
     u8g2.setCursor(0, 30); // Move down to the next "slot"
@@ -243,6 +267,18 @@ void drawPage(int state, DateTime t)
     u8g2.printf("B | M: %d%% ", soilMoistureB);
     u8g2.printf("T: %.1f", soilTempB);
     u8g2.drawUTF8(u8g2.getCursorX(), u8g2.getCursorY(), "°C");
+    break;
+    case 4: // CONFIRMATION PAGE
+    u8g2.setFont(u8g2_font_6x10_tf);
+    u8g2.drawBox(0, 15, 128, 20); // Box in the middle
+    u8g2.setDrawColor(0);
+    if (!isWatering) {
+      u8g2.drawStr(10, 28, "START WATERING?");
+    } else {
+      u8g2.drawStr(15, 28, "STOP WATERING?");
+    }
+    u8g2.setDrawColor(1);
+    u8g2.drawStr(5, 55, "Press blue to confirm");
     break;
   }
   u8g2.sendBuffer();
