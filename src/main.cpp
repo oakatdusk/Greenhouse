@@ -30,9 +30,12 @@
 #define SCL_PIN 22
 #define RTC_SQW_PIN 32
 
-RTC_DS3231 rtc;
+//functions from libraries
+RTC_DS3231 rtc; //for the RTC
+U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, SCL_PIN, SDA_PIN); //for the OLED display
+OneWire oneWire(ONE_WIRE_BUS); //set up onewire instance for the temp sensors, using the defined pin
+DallasTemperature sensors(&oneWire); //pass OneWire reference to DallasTemperature library
 
-U8G2_SH1106_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE, SCL_PIN, SDA_PIN);
 
 // FUNCTIONS___________________________________________________________________________________
 // initialization functions
@@ -40,12 +43,19 @@ void initPins();
 void initSerial();
 void initRTC();
 
+void evaluateConditions();
+
+//sensor functions
+void waterLevelCheck();
+
 // display functions
 void pageStatus(DateTime t);
 void drawPage(int state, DateTime t);
 
+//watering functions
 void startWatering();
 void stopWatering();
+void handleWatering();
 
 // VARIABLES___________________________________________________________________________________
 
@@ -91,18 +101,23 @@ unsigned long wateringCurrentDuration = 0; //how long we've been watering so far
 
 void setup()
 {
-  initPins();
-  initSerial();
+  initPins(); //initalize pins for all the outputs and inputs
+  initSerial(); //start serial communication for debugging
   Wire.begin(SDA_PIN, SCL_PIN, 10000); // 100 kHz I2C
-  u8g2.begin();
-  initRTC();
-  lastActivity = millis(); // Initialize this so it doesn't sleep immediately
+  u8g2.begin(); //initialize the OLED display
+  initRTC(); //initialize the RTC
+  sensors.begin(); //initialize the temperature sensors
+  lastActivity = millis(); // Initialize this so the display doesn't sleep immediately
 }
 
 void loop()
 {
   DateTime now = rtc.now();
-  waterLevelGood = (digitalRead(FLOAT_SWITCH_PIN) == LOW);
+
+  waterLevelCheck();
+
+
+  evaluateConditions();
 
 
 
@@ -170,10 +185,6 @@ void loop()
 
 void initPins()
 {
-  // make sure everything, especially the relay is off
-  digitalWrite(RELAY_PIN, LOW);
-  digitalWrite(BLUE_LED_PIN, LOW);
-  digitalWrite(YELLOW_LED_PIN, LOW);
 
   // Inputs
   pinMode(FLOAT_SWITCH_PIN, INPUT_PULLUP);
@@ -186,6 +197,11 @@ void initPins()
   pinMode(YELLOW_LED_PIN, OUTPUT);
   pinMode(RELAY_PIN, OUTPUT);
   pinMode(BUILT_IN_LED, OUTPUT);
+
+    // make sure everything, especially the relay is off
+  digitalWrite(RELAY_PIN, LOW);
+  digitalWrite(BLUE_LED_PIN, LOW);
+  digitalWrite(YELLOW_LED_PIN, LOW);
 }
 
 void initSerial()
@@ -306,3 +322,41 @@ void stopWatering() {
   digitalWrite(RELAY_PIN, LOW); //turn off the relay and the pump
   digitalWrite(BLUE_LED_PIN, LOW); // Turn off the blue button LED
 }
+
+void evaluateConditions() {
+    readyToWater = true; // assume yes, then disqualify
+
+    if (!waterLevelGood) {
+        readyToWater = false;
+        statusMessage = "Tank Empty";
+    }
+    // else if (soilMoistureA > 70 && soilMoistureB > 70) {
+    //     readyToWater = false;
+    //     statusMessage = "Soil Wet";
+    // }
+    // else if (barrelTemp < 5.0) {
+    //     readyToWater = false;
+    //     statusMessage = "Too Cold";
+    // }
+    // else if (wateredToday) {
+    //     readyToWater = false;
+    //     statusMessage = "Done Today";
+    // }
+    else {
+        statusMessage = "Ready";
+    }
+}
+
+void handleWatering() {
+  if (isWatering && (millis() - wateringCurrentDuration >= wateringDuration)) {
+    stopWatering();
+    wateredToday = true;
+    statusMessage = "Done Today";
+  }
+}
+
+void waterLevelCheck() {
+  waterLevelGood = (digitalRead(FLOAT_SWITCH_PIN) == LOW);
+}
+
+
