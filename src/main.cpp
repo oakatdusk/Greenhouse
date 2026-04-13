@@ -47,6 +47,7 @@ void evaluateConditions();
 
 //sensor functions
 void waterLevelCheck();
+void readTempSensors();
 
 // display functions
 void pageStatus(DateTime t);
@@ -95,9 +96,18 @@ int soilMoistureA = 0; // %
 float soilTempB = 0.0;
 int soilMoistureB = 0; // %
 
+//temp sensor stuff
+DeviceAddress barrelAddr = { 0x28, 0x64, 0x11, 0x25, 0x00, 0x00, 0x00, 0x41 };
+DeviceAddress soilAAddr  = { 0x28, 0x8C, 0x67, 0x25, 0x00, 0x00, 0x00, 0x38 };
+DeviceAddress soilBAddr  = { 0x28, 0x32, 0xB8, 0x24, 0x00, 0x00, 0x00, 0x92 };
+
+
+
 //timing
 unsigned long wateringDuration =  1 * 60 * 1000; //how long to water for
 unsigned long wateringCurrentDuration = 0; //how long we've been watering so far
+unsigned long lastSensorRead = 0; //when the sensors were last read
+const unsigned long sensorInterval = 5000; // Read every 5 seconds
 
 void setup()
 {
@@ -107,7 +117,9 @@ void setup()
   u8g2.begin(); //initialize the OLED display
   initRTC(); //initialize the RTC
   sensors.begin(); //initialize the temperature sensors
+  sensors.setWaitForConversion(false); //so it does not block all code as it converts
   lastActivity = millis(); // Initialize this so the display doesn't sleep immediately
+  
 }
 
 void loop()
@@ -115,7 +127,10 @@ void loop()
   DateTime now = rtc.now();
 
   waterLevelCheck();
-
+if (millis() - lastSensorRead > sensorInterval) {
+  readTempSensors();
+  lastSensorRead = millis();
+}
 
   evaluateConditions();
 
@@ -226,7 +241,6 @@ void initRTC()
     Serial.println("RTC lost power, setting the time...");
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
-  rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
 }
 
 void drawPage(int state, DateTime t)
@@ -359,4 +373,36 @@ void waterLevelCheck() {
   waterLevelGood = (digitalRead(FLOAT_SWITCH_PIN) == LOW);
 }
 
+void readTempSensors() {
+  sensors.requestTemperatures(); // Tell all sensors on the bus to prepare data
 
+  // Fetch temperatures by their hard-coded unique addresses
+  float tBarrel = sensors.getTempC(barrelAddr);
+  float tSoilA  = sensors.getTempC(soilAAddr);
+  float tSoilB  = sensors.getTempC(soilBAddr);
+
+  // Safety Check: Only update global variables if the reading is valid
+  // (DS18B20 returns -127.0 if the sensor is missing/disconnected)
+
+  if ( tBarrel== -127 || tBarrel == 85) {
+    tBarrel = NAN; // returns nan aka not a number if the sensor is not responding properly
+    hasError = true;
+    lastError = "TANK TEMP ERROR";
+  }
+  else {
+    barrelTemp = tBarrel;
+  }
+
+  if (tSoilA == -127 || tSoilA == 85) {
+    tSoilA = NAN; // 85 tends to show right after booting up and -127 shows if it can't get a proper reading
+  }
+  else {
+    soilTempA = tSoilA;
+  }
+  if (tSoilB == -127 || tSoilB == 85) {
+    tSoilB = NAN; // 85 tends to show right after booting up and -127 shows if it can't get a proper reading
+  }
+  else {
+    soilTempB = tSoilB;
+  }
+}
