@@ -48,6 +48,7 @@ void evaluateConditions();
 //sensor functions
 void waterLevelCheck();
 void readTempSensors();
+void readSoilSensors();
 
 // display functions
 void pageStatus(DateTime t);
@@ -88,13 +89,29 @@ String lastError = "";         // Human-readable error (e.g., "RTC Lost", "Senso
 
 // --- WATER BARREL (TANK) ---
 bool waterLevelGood = false; // From Float Switch
-float barrelTemp = 0.0;      // Water temperature
 
-// --- SOIL MONITORING (ZONE A & B) ---
+//temperatures
+float barrelTemp = 0.0;      // Water temperature
 float soilTempA = 0.0;
-int soilMoistureA = 0; // %
 float soilTempB = 0.0;
+
+
+//for soil moisture sensors
+
+int soilMoistureA = 0; // %
 int soilMoistureB = 0; // %
+
+const int DRY_VALUEA = 3326;  // Value in dry air
+const int DRY_VALUEB = 3326;  // Value in dry air
+const int WET_VALUEA = 1053;  // Value in a glass of water
+const int WET_VALUEB = 1053;  // Value in a glass of water
+
+uint32_t soilASum = 0; //we use a sum so that we can average readings to get a more stable value
+uint32_t soilBSum = 0;
+int soilSampleCount = 0;
+const int maxSoilSamples = 20; // How many samples to average
+unsigned long lastSoilRead = 0;
+unsigned long soilReadInterval = 100; // Read soil moisture every 100 ms until we have enough samples to average
 
 //temp sensor stuff
 DeviceAddress barrelAddr = { 0x28, 0x64, 0x11, 0x25, 0x00, 0x00, 0x00, 0x41 };
@@ -129,8 +146,16 @@ void loop()
   waterLevelCheck();
 if (millis() - lastSensorRead > sensorInterval) {
   readTempSensors();
+  soilSampleCount = 0; //reset soil sample count after reading temps
   lastSensorRead = millis();
 }
+if (soilSampleCount < maxSoilSamples && millis() - lastSoilRead > soilReadInterval) {
+readSoilSensors();
+  lastSoilRead = millis();
+}
+
+
+
 
   evaluateConditions();
 
@@ -404,5 +429,28 @@ void readTempSensors() {
   }
   else {
     soilTempB = tSoilB;
+  }
+}
+
+void readSoilSensors() {
+  // Add current reading to the running total
+  soilASum += analogRead(SOIL_A_PIN);
+  soilBSum += analogRead(SOIL_B_PIN);
+  soilSampleCount++;
+  lastSoilRead = millis();
+
+  // Once we hit our target number of samples, calculate the result
+  if (soilSampleCount >= maxSoilSamples) {
+    int avgA = soilASum / maxSoilSamples;
+    int avgB = soilBSum / maxSoilSamples;
+
+    // Apply the map and constrain logic
+    soilMoistureA = constrain(map(avgA, DRY_VALUEA, WET_VALUEA, 0, 100), 0, 100);
+    soilMoistureB = constrain(map(avgB, DRY_VALUEB, WET_VALUEB, 0, 100), 0, 100);
+
+    // RESET the counters for the next batch
+    soilASum = 0;
+    soilBSum = 0;
+   
   }
 }

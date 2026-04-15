@@ -70,3 +70,45 @@ void loop() {
     
 //     delay(500); // 100ms is a bit fast for moisture, 500ms is easier to read
 // }
+
+
+//stuff to use in the actual code
+const int numReadings = 20; // Number of samples to average for smoothing
+int readMoisture(int pin) {
+  long sum = 0;
+  for (int i = 0; i < numReadings; i++) {
+    sum += analogRead(pin);
+    delay(10); // Tiny delay between samples for stability
+  }
+  int averageRaw = sum / numReadings;
+
+  // Convert raw analog (0-4095) to percentage (0-100)
+  // You'll need to calibrate these numbers (AirValue vs WaterValue)
+  int percentage = map(averageRaw, 3500, 1500, 0, 100); 
+  return constrain(percentage, 0, 100);
+}
+
+//another option
+const int numSamples = 20; // Number of samples to average
+void readSoilSensors() {
+  uint32_t sumA = 0;
+  uint32_t sumB = 0;
+  int samples = 15; // A few more samples for better smoothing
+
+  for (int i = 0; i < samples; i++) {
+    sumA += analogRead(SOIL_A_PIN);
+    sumB += analogRead(SOIL_B_PIN);
+    delay(2); // Short delay to let the ADC stabilize
+  }
+
+  int avgA = sumA / samples;
+  int avgB = sumB / samples;
+
+  // Calibration: Replace 3200 (Dry) and 1200 (Wet) with your measured values
+  soilMoistureA = map(avgA, 3200, 1200, 0, 100);
+  soilMoistureB = map(avgB, 3200, 1200, 0, 100);
+
+  // Keep it within 0-100%
+  soilMoistureA = constrain(soilMoistureA, 0, 100);
+  soilMoistureB = constrain(soilMoistureB, 0, 100);
+}
