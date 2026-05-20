@@ -12,22 +12,24 @@
 #define SOIL_A_PIN 34       // Soil moisture sensor A (analog input)
 #define SOIL_B_PIN 35       // Soil moisture sensor B (analog input)
 #define ONE_WIRE_BUS 4      // Temperature sensors (digital)
-#define FLOAT_SWITCH_PIN 13 // Float switch (digital input)
+#define FLOAT_SWITCH_PIN 23 // Float switch (digital input)
 
 // Buttons
-#define BLUE_BUTTON_PIN 25   // blue button, to manually turn watering on or off
+#define BLUE_BUTTON_PIN 25 // blue button, to manually turn watering on or off
+#define BLUE_LED_PIN 26    // Blue button LED, to show watering status (digital output)
+
 #define YELLOW_BUTTON_PIN 27 // yellow button, to turn on and switch between OLED screens
+#define YELLOW_LED_PIN 13    // Yellow button LED, to show overall status (digital output)
 
 // outputs
-#define BLUE_LED_PIN 26   // Blue button LED, to show watering status (digital output)
-#define YELLOW_LED_PIN 14 // Yellow button LED, to show overall status (digital output)
-#define RELAY_PIN 23      // Relay for the pump (digital output)
-#define BUILT_IN_LED 2    // the built in LED
+
+#define RELAY_PIN 19   // Relay for the pump (digital output)
+#define BUILT_IN_LED 2 // the built in LED
 
 // I2C
 #define SDA_PIN 21
 #define SCL_PIN 22
-#define RTC_SQW_PIN 19
+#define RTC_SQW_PIN 18
 
 // functions from libraries
 RTC_DS3231 rtc;                                                     // for the RTC
@@ -64,11 +66,11 @@ Error errors[] = {
     {ERR_RTC, true, false, "RTC"},
     {ERR_I2C, true, false, "I2C"},
     {ERR_PUMP_TIMEOUT, true, false, "PUMP FAIL"},
-    {ERR_TANK_TEMP, true, false, "TANK TEMP"},
-    {ERR_SOILA_M, false, false, "SOIL A"},
-    {ERR_SOILB_M, false, false, "SOIL B"},
-    {ERR_SOILA_TEMP, false, false, "TEMP A"},
-    {ERR_SOILB_TEMP, false, false, "TEMP B"},
+    {ERR_TANK_TEMP, true, true, "TANK TEMP"},
+    {ERR_SOILA_M, false, true, "SOIL A"},
+    {ERR_SOILB_M, false, true, "SOIL B"},
+    {ERR_SOILA_TEMP, false, true, "TEMP A"},
+    {ERR_SOILB_TEMP, false, true, "TEMP B"},
 };
 
 enum SystemState
@@ -140,8 +142,11 @@ float soilTempB = 0.0;
 int soilMoistureA = 0;       // %
 int soilMoistureB = 0;       // %
 int soilMoistureTarget = 50; //% target soil moisture percentage to stop watering
+int newSoilMoistureTarget = 50;
+bool settingMoistureTarget = false;
 
-bool readingSoilMoisture = false; // flag to indicate if we're currently taking soil moisture readings
+bool readingSoilMoisture = true; // flag to indicate if we're currently taking soil moisture readings
+bool readingTemp = true;         // flag to indicate if we're currently taking temp readings
 
 const int DRY_VALUEA = 3326; // Value in dry air
 const int DRY_VALUEB = 3326; // Value in dry air
@@ -215,14 +220,14 @@ void manualStart();
 
 void setup()
 {
-  initPins(); // initalize pins for all the outputs and inputs
-  // initSerial();                        // start serial communication for debugging
-  Wire.begin(SDA_PIN, SCL_PIN, 10000); // 100 kHz I2C
-  u8g2.begin();                        // initialize the OLED display
-  initRTC();                           // initialize the RTC
-  sensors.begin();                     // initialize the temperature sensors
-  sensors.setWaitForConversion(false); // so it does not block all code as it converts
-  lastActivity = millis();             // Initialize this so the display doesn't sleep immediately
+  initPins();                           // initalize pins for all the outputs and inputs
+  initSerial();                         // start serial communication for debugging
+  Wire.begin(SDA_PIN, SCL_PIN, 100000); // 100 kHz I2C
+  u8g2.begin();                         // initialize the OLED display
+  initRTC();                            // initialize the RTC
+  sensors.begin();                      // initialize the temperature sensors
+  sensors.setWaitForConversion(false);  // so it does not block all code as it converts
+  lastActivity = millis();              // Initialize this so the display doesn't sleep immediately
 }
 
 void loop()
@@ -233,10 +238,21 @@ void loop()
   waterLevelCheck();
   if (millis() - lastSensorRead > sensorInterval) // is it time to read the sensors again?
   {
-    readTempSensors();
+    Serial.println("Current State: " + String(getStateMessage(currentState)));
+    Serial.printf("Current Errors: %d\n", countActiveErrors());
+    Serial.println("Active Errors:");
+    for (int i = 0; i < ERR_COUNT; i++)
+    {
+      if (errors[i].active)
+      {
+        Serial.println("- " + String(errors[i].message));
+      }
+    }
+    readingTemp = true;         // set flag to start reading temp sensors in the main loop (since it takes a while and we want to do it asynchronously)
     readingSoilMoisture = true; // set flag to start reading soil moisture in the main loop (since it takes a while and we want to do it asynchronously)
     lastSensorRead = millis();
   }
+  readTempSensors();
   readSoilSensors();
 
   // buttons
@@ -321,12 +337,20 @@ bool yellowButtonPress()
     lastActivity = millis(); // resets display inactivity timer
 
     lastYellowDebounce = millis();
-
-    pageState++;
-
-    if (pageState > 3)
+    if (settingMoistureTarget)
     {
-      pageState = 1;
+      soilMoistureTarget = newSoilMoistureTarget;
+      pageState = 5;
+      settingMoistureTarget = false;
+    }
+    else
+    {
+      pageState++;
+
+      if (pageState > 4)
+      {
+        pageState = 1;
+      }
     }
   }
 
@@ -353,30 +377,42 @@ bool blueButtonPress()
   {
     lastActivity = millis(); // Reset inactivity timer
     lastBlueDebounce = millis();
-    if (!blueAlreadyPressed)
+    if (pageState == 4)
     {
-      if (currentState == STATE_ACTIVE || currentState == STATE_MANUALLY_STARTED)
-      {
-        pageState = 4; // go to confirmation page for stopping
-      }
-      else
-      {
-        pageState = 6; // go to confirmation page for starting
-      }
-      blueAlreadyPressed = true; // Mark as pressed
+      settingMoistureTarget = true;
+      lastActivity = millis(); // Reset inactivity timer
+      lastBlueDebounce = millis();
+      newSoilMoistureTarget += 10;
+      if (newSoilMoistureTarget > 100)
+        newSoilMoistureTarget = 0;
     }
     else
     {
-      // If already pressed, this is a confirmation press
-      if (currentState == STATE_ACTIVE || currentState == STATE_MANUALLY_STARTED)
+      if (!blueAlreadyPressed)
       {
-        manualStop();
+        if (currentState == STATE_ACTIVE || currentState == STATE_MANUALLY_STARTED)
+        {
+          pageState = 6; // go to confirmation page for stopping
+        }
+        else
+        {
+          pageState = 8; // go to confirmation page for starting
+        }
+        blueAlreadyPressed = true; // Mark as pressed
       }
       else
       {
-        manualStart();
+        // If already pressed, this is a confirmation press
+        if (currentState == STATE_ACTIVE || currentState == STATE_MANUALLY_STARTED)
+        {
+          manualStop();
+        }
+        else
+        {
+          manualStart();
+        }
+        blueAlreadyPressed = false; // Reset for next toggle
       }
-      blueAlreadyPressed = false; // Reset for next toggle
     }
   }
 
@@ -388,7 +424,7 @@ bool blueButtonPress()
 void manualStop()
 {
   setState(STATE_MANUALLY_STOPPED);
-  pageState = 5; // go to manually stopped page
+  pageState = 7; // go to manually stopped page
 }
 
 void manualStart()
@@ -396,13 +432,13 @@ void manualStart()
   if (hasStoppingError())
   {
     setState(STATE_ERROR);
-    pageState = 8; // go to manual start failed page
-    return;        // If there is an error that should stop watering, do not allow manual start
+    pageState = 10; // go to manual start failed page
+    return;         // If there is an error that should stop watering, do not allow manual start
   }
   else
   {
     setState(STATE_MANUALLY_STARTED);
-    pageState = 7; // go to manually started page
+    pageState = 8; // go to manually started page
   }
 }
 
@@ -448,11 +484,12 @@ void setState(SystemState newState)
     pageState = 0; // turn off display
     // add in something to slow down sensor readings and updates
 
-    if (newState == STATE_IDLE) {
-  wateringElapsed = 0;
-  totalElapsed = 0;
-  wateringProgress = 0;
-}
+    if (newState == STATE_IDLE)
+    {
+      wateringElapsed = 0;
+      totalElapsed = 0;
+      wateringProgress = 0;
+    }
   }
 
   currentState = newState;
@@ -503,7 +540,7 @@ void automaticStart()
   else if (timeToWater && !readyToWater)
     setState(STATE_DELAY);
   else if (currentState == STATE_DELAY && readyToWater)
-  setState(STATE_READY);
+    setState(STATE_READY);
 }
 
 bool waterLevelCheck()
@@ -514,27 +551,41 @@ bool waterLevelCheck()
 
 void readTempSensors()
 {
-  sensors.requestTemperatures(); // Tell all sensors on the bus to prepare data
+  if (!readingTemp)
+    return; // not time to read temp sensors yet
+  static bool waitingForConversion = false;
+  static unsigned long lastTempRequest = 0;
+  if (!waitingForConversion)
+  {
+    sensors.requestTemperatures(); // Tell all sensors on the bus to prepare data
+    waitingForConversion = true;
+    lastTempRequest = millis();
+  }
+  if (millis() - lastTempRequest >= 750 && waitingForConversion) // DS18B20 max conversion time is 750 ms, so we wait at least that long before trying to read the data
+  {
+    lastTempRequest = millis();
+    waitingForConversion = false;
+    readingTemp = false;
+    // Fetch temperatures by their hard-coded unique addresses
+    float tBarrel = sensors.getTempC(barrelAddr);
+    float tSoilA = sensors.getTempC(soilAAddr);
+    float tSoilB = sensors.getTempC(soilBAddr);
 
-  // Fetch temperatures by their hard-coded unique addresses
-  float tBarrel = sensors.getTempC(barrelAddr);
-  float tSoilA = sensors.getTempC(soilAAddr);
-  float tSoilB = sensors.getTempC(soilBAddr);
+    // Safety Check: Only update global variables if the reading is valid
+    // (DS18B20 returns -127.0 if the sensor is missing/disconnected)
 
-  // Safety Check: Only update global variables if the reading is valid
-  // (DS18B20 returns -127.0 if the sensor is missing/disconnected)
+    errors[ERR_TANK_TEMP].active = (tBarrel == -127 || tBarrel == 85);
+    if (!errors[ERR_TANK_TEMP].active)
+      barrelTemp = tBarrel;
 
-  errors[ERR_TANK_TEMP].active = (tBarrel == -127 || tBarrel == 85);
-  if (!errors[ERR_TANK_TEMP].active)
-    barrelTemp = tBarrel;
+    errors[ERR_SOILA_TEMP].active = (tSoilA == -127 || tSoilA == 85);
+    if (!errors[ERR_SOILA_TEMP].active)
+      soilTempA = tSoilA;
 
-  errors[ERR_SOILA_TEMP].active = (tSoilA == -127 || tSoilA == 85);
-  if (!errors[ERR_SOILA_TEMP].active)
-    soilTempA = tSoilA;
-
-  errors[ERR_SOILB_TEMP].active = (tSoilB == -127 || tSoilB == 85);
-  if (!errors[ERR_SOILB_TEMP].active)
-    soilTempB = tSoilB;
+    errors[ERR_SOILB_TEMP].active = (tSoilB == -127 || tSoilB == 85);
+    if (!errors[ERR_SOILB_TEMP].active)
+      soilTempB = tSoilB;
+  }
 }
 
 void readSoilSensors()
@@ -575,6 +626,8 @@ void readSoilSensors()
     soilBSum = 0;
     soilSampleCount = 0;
     readingSoilMoisture = false; // done reading soil moisture for now
+    Serial.printf("A raw: %d\n", avgA);
+    Serial.printf("B raw: %d\n", avgB);
   }
 }
 
@@ -717,7 +770,7 @@ void updateDisplay(DateTime t)
   u8g2.clearBuffer();
   u8g2.setPowerSave(0); // Wake up OLED if it was asleep
 
-  if (pageState < 4)
+  if (pageState < 5)
   { // because only the first few pages get the status bar
     // status bar
     u8g2.setFont(u8g2_font_Terminal_te);
@@ -779,8 +832,15 @@ void updateDisplay(DateTime t)
     drawCenteredText("RAIN TANK", 35);
     u8g2.drawHLine(0, 42, 64); // Divider line
     u8g2.setCursor(0, 60);
-    u8g2.printf("Temp:%.1f", barrelTemp);
-    u8g2.drawUTF8(u8g2.getCursorX(), u8g2.getCursorY(), "°C");
+    if (errors[ERR_TANK_TEMP].active)
+    {
+      u8g2.printf("Temp:fail");
+    }
+    else
+    {
+      u8g2.printf("Temp:%.1f", barrelTemp);
+      u8g2.drawUTF8(u8g2.getCursorX(), u8g2.getCursorY(), "°C");
+    }
     if (waterLevelGood)
     {
       u8g2.drawStr(0, 75, "Tank:Full");
@@ -798,23 +858,69 @@ void updateDisplay(DateTime t)
     u8g2.drawRFrame(3, 34, 58, 16, 2); //(x, y, width, height, radius)
 
     u8g2.setCursor(9, 62);
-    u8g2.printf("%d%%", soilMoistureA);
+    if (!errors[ERR_SOILA_M].active) u8g2.printf("%d%%", soilMoistureA);
+    else u8g2.printf("fail");
+
     u8g2.setCursor(41, 62);
-    u8g2.printf("%d%%", soilMoistureB);
+    if (!errors[ERR_SOILB_M].active) u8g2.printf("%d%%", soilMoistureB);
+    else u8g2.printf("fail");
 
     drawCenteredText("SOIL TEMP", 83);
     u8g2.drawRFrame(3, 72, 58, 16, 2); //(x, y, width, height, radius)
 
     u8g2.setCursor(2, 100);
-    u8g2.printf("%.1f", soilTempA);
-    u8g2.drawUTF8(u8g2.getCursorX(), u8g2.getCursorY(), "°");
+    if (!errors[ERR_SOILA_TEMP].active)
+    {
+      u8g2.printf("%.1f", soilTempA);
+      u8g2.drawUTF8(u8g2.getCursorX(), u8g2.getCursorY(), "°");
+    }
+    else u8g2.printf("fail");
+    
     u8g2.setCursor(34, 100);
-    u8g2.printf("%.1f", soilTempB);
-    u8g2.drawUTF8(u8g2.getCursorX(), u8g2.getCursorY(), "°");
+    if (!errors[ERR_SOILB_TEMP].active)
+    {
+      u8g2.printf("%.1f", soilTempB);
+      u8g2.drawUTF8(u8g2.getCursorX(), u8g2.getCursorY(), "°");
+    }
+    else u8g2.printf("fail");
 
     break;
+  case 4:
+  {
+    u8g2.setFont(u8g2_font_6x12_tf);
+    drawCenteredText("TARGET", 30);
+    drawCenteredText("MOISTURE", 40);
 
-  case 4: // ask for manual stop
+    u8g2.setFont(u8g2_font_ncenB14_tr);
+    char buf[10];
+    int val = settingMoistureTarget ? newSoilMoistureTarget : soilMoistureTarget;
+    sprintf(buf, "%d%%", val);
+    drawCenteredText(buf, 55);
+
+    u8g2.setFont(u8g2_font_5x7_tf);
+    drawCenteredText("press blue", 65);
+    drawCenteredText("to change", 80);
+    drawCenteredText("yellow", 95);
+    drawCenteredText("to confirm", 110);
+    
+  }
+  break;
+  case 5: // target moisture change confirmed
+  {
+    u8g2.setFont(u8g2_font_6x12_tf);
+    drawCenteredText("MOISTURE SET", 30);
+
+    u8g2.setFont(u8g2_font_ncenB14_tr);
+    char buf[10];
+    sprintf(buf, "%d%%", soilMoistureTarget);
+    drawCenteredText(buf, 60);
+
+    u8g2.setFont(u8g2_font_5x7_tf);
+    drawCenteredText("Saved", 85);
+  }
+  break;
+
+  case 6: // ask for manual stop
 
     u8g2.drawBox(0, 15, 64, 25); // Box in the middle
     u8g2.setDrawColor(0);
@@ -831,7 +937,7 @@ void updateDisplay(DateTime t)
 
     break;
 
-  case 5: // manually stopped
+  case 7: // manually stopped
     u8g2.drawBox(0, 15, 64, 38);
     u8g2.setDrawColor(0);
     u8g2.drawRFrame(1, 16, 62, 36, 2); //(x, y, width, height, radius)
@@ -851,7 +957,7 @@ void updateDisplay(DateTime t)
 
     break;
 
-  case 6: // ask for manual start
+  case 8: // ask for manual start
     u8g2.clearBuffer();
     u8g2.setFont(u8g2_font_ncenB12_tr);
     // u8g2.setFont(u8g2_font_Pixellari_tf );
@@ -870,7 +976,7 @@ void updateDisplay(DateTime t)
 
     break;
 
-  case 7: // manually started
+  case 9: // manually started
     u8g2.drawBox(0, 15, 64, 38);
     u8g2.setDrawColor(0);
     u8g2.drawRFrame(1, 16, 62, 36, 2); //(x, y, width, height, radius)
@@ -891,7 +997,7 @@ void updateDisplay(DateTime t)
 
     break;
 
-  case 8: // page for failed manual start
+  case 10: // page for failed manual start
 
     // Top banner
     u8g2.drawBox(0, 15, 64, 38);
@@ -916,10 +1022,6 @@ void updateDisplay(DateTime t)
     // Warning icon
     u8g2.setFont(u8g2_font_open_iconic_embedded_2x_t);
     u8g2.drawGlyph(24, 128, 71); // ! icon
-
-    break;
-
-  case 9: // change target moisture
 
     break;
   }
