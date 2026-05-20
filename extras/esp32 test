@@ -1,0 +1,66 @@
+#include <Arduino.h>
+#include <WiFi.h>
+
+#ifndef LED_BUILTIN
+#define LED_BUILTIN 2
+#endif
+
+void setup() {
+    pinMode(LED_BUILTIN, OUTPUT);
+
+    Serial.begin(115200);
+    delay(2000);
+
+    Serial.println();
+    Serial.println("===== ESP32 Hardware Test =====");
+
+    Serial.print("Chip model: ");
+    Serial.println(ESP.getChipModel());
+
+    Serial.print("Chip cores: ");
+    Serial.println(ESP.getChipCores());
+
+    Serial.print("CPU frequency (MHz): ");
+    Serial.println(ESP.getCpuFreqMHz());
+
+    Serial.print("Flash size (MB): ");
+    Serial.println(ESP.getFlashChipSize() / (1024 * 1024));
+
+    Serial.print("Free heap: ");
+    Serial.println(ESP.getFreeHeap());
+
+    Serial.println();
+    Serial.println("Starting WiFi scan...");
+}
+
+void loop() {
+    static bool scanned = false;
+
+    digitalWrite(LED_BUILTIN, HIGH);
+    delay(250);
+    digitalWrite(LED_BUILTIN, LOW);
+    delay(250);
+
+    if (!scanned) {
+        int networks = WiFi.scanNetworks();
+
+        Serial.println();
+        Serial.println("WiFi networks found:");
+
+        if (networks == 0) {
+            Serial.println("No networks found");
+        } else {
+            for (int i = 0; i < networks; i++) {
+                Serial.print(i + 1);
+                Serial.print(": ");
+                Serial.print(WiFi.SSID(i));
+                Serial.print("  RSSI: ");
+                Serial.println(WiFi.RSSI(i));
+            }
+        }
+
+        scanned = true;
+        Serial.println();
+        Serial.println("ESP32 test complete.");
+    }
+}
