@@ -12,24 +12,24 @@
 #define SOIL_A_PIN 34       // Soil moisture sensor A (analog input)
 #define SOIL_B_PIN 35       // Soil moisture sensor B (analog input)
 #define ONE_WIRE_BUS 4      // Temperature sensors (digital)
-#define FLOAT_SWITCH_PIN 23 // Float switch (digital input)
+#define FLOAT_SWITCH_PIN 13 // Float switch (digital input)
 
 // Buttons
-#define BLUE_BUTTON_PIN 25 // blue button, to manually turn watering on or off
-#define BLUE_LED_PIN 26    // Blue button LED, to show watering status (digital output)
+#define BLUE_BUTTON_PIN 26 // blue button, to manually turn watering on or off
+#define BLUE_LED_PIN 25    // Blue button LED, to show watering status (digital output)
 
 #define YELLOW_BUTTON_PIN 27 // yellow button, to turn on and switch between OLED screens
-#define YELLOW_LED_PIN 13    // Yellow button LED, to show overall status (digital output)
+#define YELLOW_LED_PIN 14    // Yellow button LED, to show overall status (digital output)
 
 // outputs
 
-#define RELAY_PIN 19   // Relay for the pump (digital output)
+#define RELAY_PIN 23   // Relay for the pump (digital output)
 #define BUILT_IN_LED 2 // the built in LED
 
 // I2C
 #define SDA_PIN 21
 #define SCL_PIN 22
-#define RTC_SQW_PIN 18
+#define RTC_SQW_PIN 19
 
 // functions from libraries
 RTC_DS3231 rtc;                                                     // for the RTC
@@ -282,7 +282,7 @@ void initPins()
 
   // Inputs
   pinMode(FLOAT_SWITCH_PIN, INPUT_PULLUP);
-  pinMode(BLUE_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(BLUE_BUTTON_PIN, INPUT);
   pinMode(YELLOW_BUTTON_PIN, INPUT_PULLUP);
   pinMode(RTC_SQW_PIN, INPUT_PULLUP);
 
