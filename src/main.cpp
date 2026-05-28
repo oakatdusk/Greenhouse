@@ -68,7 +68,7 @@ Error errors[] = {
     {ERR_PUMP_TIMEOUT, true, false, "PUMP FAIL"},
     {ERR_TANK_TEMP, true, true, "TANK TEMP"},
     {ERR_SOILA_M, false, true, "SOIL A"},
-    {ERR_SOILB_M, false, true, "SOIL B"},
+    {ERR_SOILB_M, false, false, "SOIL B"},
     {ERR_SOILA_TEMP, false, true, "TEMP A"},
     {ERR_SOILB_TEMP, false, true, "TEMP B"},
 };
@@ -140,7 +140,7 @@ float soilTempB = 0.0;
 // for soil moisture sensors
 
 int soilMoistureA = 0;       // %
-int soilMoistureB = 0;       // %
+//int soilMoistureB = 0;       // %
 int soilMoistureTarget = 50; //% target soil moisture percentage to stop watering
 int newSoilMoistureTarget = 50;
 bool settingMoistureTarget = false;
@@ -148,13 +148,13 @@ bool settingMoistureTarget = false;
 bool readingSoilMoisture = true; // flag to indicate if we're currently taking soil moisture readings
 bool readingTemp = true;         // flag to indicate if we're currently taking temp readings
 
-const int DRY_VALUEA = 3326; // Value in dry air
-const int DRY_VALUEB = 3326; // Value in dry air
-const int WET_VALUEA = 1053; // Value in a glass of water
-const int WET_VALUEB = 1053; // Value in a glass of water
+const int DRY_VALUEA = 2300; // Value in dry air
+//const int DRY_VALUEB = 2300; // Value in dry air
+const int WET_VALUEA = 795; // Value in a glass of water
+//const int WET_VALUEB = 795; // Value in a glass of water
 
 uint32_t soilASum = 0; // we use a sum so that we can average readings to get a more stable value
-uint32_t soilBSum = 0;
+//uint32_t soilBSum = 0;
 int soilSampleCount = 0;
 const int maxSoilSamples = 20; // How many samples to average
 unsigned long lastSoilRead = 0;
@@ -281,8 +281,8 @@ void initPins()
 {
 
   // Inputs
-  pinMode(FLOAT_SWITCH_PIN, INPUT_PULLUP);
-  pinMode(BLUE_BUTTON_PIN, INPUT);
+  pinMode(FLOAT_SWITCH_PIN, INPUT);
+  pinMode(BLUE_BUTTON_PIN, INPUT_PULLUP);
   pinMode(YELLOW_BUTTON_PIN, INPUT_PULLUP);
   pinMode(RTC_SQW_PIN, INPUT_PULLUP);
 
@@ -317,6 +317,7 @@ void initRTC()
   {
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
+  rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
 }
 
 // checks for a button press and updates the page
@@ -523,8 +524,9 @@ void handleWatering()
   totalElapsed = wateringElapsed + (millis() - wateringStartTime);
   wateringProgress = constrain(map(totalElapsed, 0, wateringDuration, 0, 100), 0, 100);
 
-  if (totalElapsed >= wateringDuration ||
-      (soilMoistureA >= soilMoistureTarget && soilMoistureB >= soilMoistureTarget && currentState == STATE_ACTIVE))
+  //if (totalElapsed >= wateringDuration ||
+  //    (soilMoistureA >= soilMoistureTarget && soilMoistureB >= soilMoistureTarget && currentState == STATE_ACTIVE))
+  if (totalElapsed >= wateringDuration)
   {
     wateringProgress = 100;
     setState(STATE_DONE);
@@ -545,7 +547,7 @@ void automaticStart()
 
 bool waterLevelCheck()
 {
-  waterLevelGood = (digitalRead(FLOAT_SWITCH_PIN) == HIGH);
+  waterLevelGood = (digitalRead(FLOAT_SWITCH_PIN) == LOW);
   return waterLevelGood;
 }
 
@@ -597,7 +599,7 @@ void readSoilSensors()
 
   // Add current reading to the running total
   soilASum += analogRead(SOIL_A_PIN);
-  soilBSum += analogRead(SOIL_B_PIN);
+  //soilBSum += analogRead(SOIL_B_PIN);
   soilSampleCount++;
   lastSoilRead = millis();
 
@@ -605,29 +607,29 @@ void readSoilSensors()
   if (soilSampleCount >= maxSoilSamples)
   {
     int avgA = soilASum / maxSoilSamples;
-    int avgB = soilBSum / maxSoilSamples;
+    //int avgB = soilBSum / maxSoilSamples;
 
     // check for weird readings BEFORE mapping
     errors[ERR_SOILA_M].active = (avgA < (WET_VALUEA - 200) || avgA > (DRY_VALUEA + 200));
-    errors[ERR_SOILB_M].active = (avgB < (WET_VALUEB - 200) || avgB > (DRY_VALUEB + 200));
+    //errors[ERR_SOILB_M].active = (avgB < (WET_VALUEB - 200) || avgB > (DRY_VALUEB + 200));
 
     // only update moisture if reading looks valid
     if (!errors[ERR_SOILA_M].active)
     {
       soilMoistureA = constrain(map(avgA, DRY_VALUEA, WET_VALUEA, 0, 100), 0, 100);
     }
-    if (!errors[ERR_SOILB_M].active)
-    {
-      soilMoistureB = constrain(map(avgB, DRY_VALUEB, WET_VALUEB, 0, 100), 0, 100);
-    }
+    // if (!errors[ERR_SOILB_M].active)
+    // {
+    //   soilMoistureB = constrain(map(avgB, DRY_VALUEB, WET_VALUEB, 0, 100), 0, 100);
+    // }
 
     // RESET the counters for the next batch
     soilASum = 0;
-    soilBSum = 0;
+    //soilBSum = 0;
     soilSampleCount = 0;
     readingSoilMoisture = false; // done reading soil moisture for now
     Serial.printf("A raw: %d\n", avgA);
-    Serial.printf("B raw: %d\n", avgB);
+    //Serial.printf("B raw: %d\n", avgB);
   }
 }
 
@@ -857,13 +859,13 @@ void updateDisplay(DateTime t)
     drawCenteredText("MOISTURE", 45);
     u8g2.drawRFrame(3, 34, 58, 16, 2); //(x, y, width, height, radius)
 
-    u8g2.setCursor(9, 62);
+    u8g2.setCursor(26, 62);
     if (!errors[ERR_SOILA_M].active) u8g2.printf("%d%%", soilMoistureA);
-    else u8g2.printf("fail");
+    else drawCenteredText("fail", 62);
 
-    u8g2.setCursor(41, 62);
-    if (!errors[ERR_SOILB_M].active) u8g2.printf("%d%%", soilMoistureB);
-    else u8g2.printf("fail");
+    // u8g2.setCursor(41, 62);
+    // if (!errors[ERR_SOILB_M].active) u8g2.printf("%d%%", soilMoistureB);
+    // else u8g2.printf("fail");
 
     drawCenteredText("SOIL TEMP", 83);
     u8g2.drawRFrame(3, 72, 58, 16, 2); //(x, y, width, height, radius)
@@ -1038,3 +1040,5 @@ void displayTimeout()
   }
 }
 //
+
+
