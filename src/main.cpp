@@ -139,8 +139,8 @@ float soilTempB = 0.0;
 
 // for soil moisture sensors
 
-int soilMoistureA = 0;       // %
-//int soilMoistureB = 0;       // %
+int soilMoistureA = 0; // %
+// int soilMoistureB = 0;       // %
 int soilMoistureTarget = 50; //% target soil moisture percentage to stop watering
 int newSoilMoistureTarget = 50;
 bool settingMoistureTarget = false;
@@ -149,12 +149,12 @@ bool readingSoilMoisture = true; // flag to indicate if we're currently taking s
 bool readingTemp = true;         // flag to indicate if we're currently taking temp readings
 
 const int DRY_VALUEA = 2300; // Value in dry air
-//const int DRY_VALUEB = 2300; // Value in dry air
+// const int DRY_VALUEB = 2300; // Value in dry air
 const int WET_VALUEA = 795; // Value in a glass of water
-//const int WET_VALUEB = 795; // Value in a glass of water
+// const int WET_VALUEB = 795; // Value in a glass of water
 
 uint32_t soilASum = 0; // we use a sum so that we can average readings to get a more stable value
-//uint32_t soilBSum = 0;
+// uint32_t soilBSum = 0;
 int soilSampleCount = 0;
 const int maxSoilSamples = 20; // How many samples to average
 unsigned long lastSoilRead = 0;
@@ -174,8 +174,10 @@ int wateringProgress = 0;                             // percentage of watering 
 const uint wateringStartHour = 13;                    // what hour to start watering (24 hr format)
 
 // sensor timing
-unsigned long lastSensorRead = 0;          // when the sensors were last read
-const unsigned long sensorInterval = 5000; // Read temp and moisture every 5 seconds
+unsigned long lastSensorRead = 0;                        // when the sensors were last read
+unsigned long currentSensorInterval = 5000;              // Starts at 5 seconds
+const unsigned long normalSensorInterval = 5000;         // 5 seconds when active/awake
+const unsigned long slowSensorInterval = 15 * 60 * 1000; // 15 minutes during "software sleep"
 
 // FUNCTIONS___________________________________________________________________________________
 
@@ -188,6 +190,7 @@ void initRTC();
 void evaluateConditions(); // check conditions to determine if ready to water
 void checkMidnightReset(DateTime now);
 void timeToWaterCheck(DateTime now); // check RTC to see if it's time to water based on the schedule
+void goToSleep(DateTime now); //checks if it is time to go into slow mode
 
 Error *getActiveError();
 int countActiveErrors();
@@ -236,18 +239,8 @@ void loop()
 
   // reading all sensors
   waterLevelCheck();
-  if (millis() - lastSensorRead > sensorInterval) // is it time to read the sensors again?
+  if (millis() - lastSensorRead > currentSensorInterval) // is it time to read the sensors again?
   {
-    Serial.println("Current State: " + String(getStateMessage(currentState)));
-    Serial.printf("Current Errors: %d\n", countActiveErrors());
-    Serial.println("Active Errors:");
-    for (int i = 0; i < ERR_COUNT; i++)
-    {
-      if (errors[i].active)
-      {
-        Serial.println("- " + String(errors[i].message));
-      }
-    }
     readingTemp = true;         // set flag to start reading temp sensors in the main loop (since it takes a while and we want to do it asynchronously)
     readingSoilMoisture = true; // set flag to start reading soil moisture in the main loop (since it takes a while and we want to do it asynchronously)
     lastSensorRead = millis();
@@ -259,9 +252,11 @@ void loop()
   yellowButtonPress();
   blueButtonPress();
 
-  // evaluate logic
+  // evaluate timing
   checkMidnightReset(now);
+  goToSleep(now);
   timeToWaterCheck(now);
+  //evaluate logic
   evaluateConditions();
 
   // results of the logic
@@ -303,7 +298,7 @@ void initSerial()
   Serial.begin(115200);
   while (!Serial)
     delay(10); // wait for serial port to connect. Needed for native USB
-  Serial.println("Serial communication initialized.");
+  // Serial.println("Serial communication initialized.");
 }
 
 void initRTC()
@@ -317,7 +312,7 @@ void initRTC()
   {
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
-  rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  // rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
 }
 
 // checks for a button press and updates the page
@@ -348,7 +343,7 @@ bool yellowButtonPress()
     {
       pageState++;
 
-      if (pageState > 4)
+      if (pageState > 3)
       {
         pageState = 1;
       }
@@ -464,6 +459,7 @@ void setState(SystemState newState)
   if (currentState == STATE_SLEEP)
   {
     // change update intervals back to normal
+    currentSensorInterval = normalSensorInterval;
   }
 
   // entry actions for new state
@@ -482,15 +478,16 @@ void setState(SystemState newState)
 
   if (newState == STATE_SLEEP)
   {
-    pageState = 0; // turn off display
+    pageState = 0;        // turn off display
+    u8g2.setPowerSave(1); // Put OLED to sleep physically
+    currentSensorInterval = slowSensorInterval;
     // add in something to slow down sensor readings and updates
-
-    if (newState == STATE_IDLE)
-    {
-      wateringElapsed = 0;
-      totalElapsed = 0;
-      wateringProgress = 0;
-    }
+  }
+  if (newState == STATE_IDLE)
+  {
+    wateringElapsed = 0;
+    totalElapsed = 0;
+    wateringProgress = 0;
   }
 
   currentState = newState;
@@ -524,8 +521,8 @@ void handleWatering()
   totalElapsed = wateringElapsed + (millis() - wateringStartTime);
   wateringProgress = constrain(map(totalElapsed, 0, wateringDuration, 0, 100), 0, 100);
 
-  //if (totalElapsed >= wateringDuration ||
-  //    (soilMoistureA >= soilMoistureTarget && soilMoistureB >= soilMoistureTarget && currentState == STATE_ACTIVE))
+  // if (totalElapsed >= wateringDuration ||
+  //     (soilMoistureA >= soilMoistureTarget && soilMoistureB >= soilMoistureTarget && currentState == STATE_ACTIVE))
   if (totalElapsed >= wateringDuration)
   {
     wateringProgress = 100;
@@ -599,7 +596,7 @@ void readSoilSensors()
 
   // Add current reading to the running total
   soilASum += analogRead(SOIL_A_PIN);
-  //soilBSum += analogRead(SOIL_B_PIN);
+  // soilBSum += analogRead(SOIL_B_PIN);
   soilSampleCount++;
   lastSoilRead = millis();
 
@@ -607,11 +604,11 @@ void readSoilSensors()
   if (soilSampleCount >= maxSoilSamples)
   {
     int avgA = soilASum / maxSoilSamples;
-    //int avgB = soilBSum / maxSoilSamples;
+    // int avgB = soilBSum / maxSoilSamples;
 
     // check for weird readings BEFORE mapping
     errors[ERR_SOILA_M].active = (avgA < (WET_VALUEA - 200) || avgA > (DRY_VALUEA + 200));
-    //errors[ERR_SOILB_M].active = (avgB < (WET_VALUEB - 200) || avgB > (DRY_VALUEB + 200));
+    // errors[ERR_SOILB_M].active = (avgB < (WET_VALUEB - 200) || avgB > (DRY_VALUEB + 200));
 
     // only update moisture if reading looks valid
     if (!errors[ERR_SOILA_M].active)
@@ -625,11 +622,11 @@ void readSoilSensors()
 
     // RESET the counters for the next batch
     soilASum = 0;
-    //soilBSum = 0;
+    // soilBSum = 0;
     soilSampleCount = 0;
     readingSoilMoisture = false; // done reading soil moisture for now
-    Serial.printf("A raw: %d\n", avgA);
-    //Serial.printf("B raw: %d\n", avgB);
+    // Serial.printf("A raw: %d\n", avgA);
+    // Serial.printf("B raw: %d\n", avgB);
   }
 }
 
@@ -860,8 +857,10 @@ void updateDisplay(DateTime t)
     u8g2.drawRFrame(3, 34, 58, 16, 2); //(x, y, width, height, radius)
 
     u8g2.setCursor(26, 62);
-    if (!errors[ERR_SOILA_M].active) u8g2.printf("%d%%", soilMoistureA);
-    else drawCenteredText("fail", 62);
+    if (!errors[ERR_SOILA_M].active)
+      u8g2.printf("%d%%", soilMoistureA);
+    else
+      drawCenteredText("fail", 62);
 
     // u8g2.setCursor(41, 62);
     // if (!errors[ERR_SOILB_M].active) u8g2.printf("%d%%", soilMoistureB);
@@ -876,15 +875,17 @@ void updateDisplay(DateTime t)
       u8g2.printf("%.1f", soilTempA);
       u8g2.drawUTF8(u8g2.getCursorX(), u8g2.getCursorY(), "°");
     }
-    else u8g2.printf("fail");
-    
+    else
+      u8g2.printf("fail");
+
     u8g2.setCursor(34, 100);
     if (!errors[ERR_SOILB_TEMP].active)
     {
       u8g2.printf("%.1f", soilTempB);
       u8g2.drawUTF8(u8g2.getCursorX(), u8g2.getCursorY(), "°");
     }
-    else u8g2.printf("fail");
+    else
+      u8g2.printf("fail");
 
     break;
   case 4:
@@ -904,7 +905,6 @@ void updateDisplay(DateTime t)
     drawCenteredText("to change", 80);
     drawCenteredText("yellow", 95);
     drawCenteredText("to confirm", 110);
-    
   }
   break;
   case 5: // target moisture change confirmed
@@ -1040,5 +1040,13 @@ void displayTimeout()
   }
 }
 //
-
-
+void goToSleep (DateTime t) {
+  if (currentState == STATE_SLEEP || currentState == STATE_ACTIVE || currentState == STATE_MANUALLY_STARTED) return;
+  uint8_t currentHour = t.hour();
+  if (currentHour == 21) {
+    setState(STATE_SLEEP);
+  }
+  if (currentHour == 11) {
+    setState(STATE_IDLE);
+  }
+}
